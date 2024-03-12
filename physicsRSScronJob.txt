@@ -1,0 +1,5 @@
+SHELL=/bin/bash
+MAILTO=""
+
+0 5 * * * source /data/sw/anaconda/anaconda3/bin/activate scraper && cd /data/murchgroup/scripts/scraper && python physicsRSSreaderMain.py
+
