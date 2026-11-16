@@ -5,7 +5,7 @@
 import sys
 import time
 
-from functionDefs import executiveSummary, sendSummaryEmails
+from functionDefs import executiveSummary, feedProblem, sendSummaryEmails
 from recipients import recipientsList
 
 
@@ -16,21 +16,38 @@ with open('latestRunDateTime', 'r') as f:
 print(latestExecutionDate)
 
 
+# Order matters for duplicates: a paper is listed under the first feed it appears in, so each
+# journal's main feed (which has author names) comes before its subject feeds (titles only).
 feedURLsAndNames = [
-    ['Science Express', 'http://www.sciencemag.org/rss/express.xml'],
-    ['Science Mag', 'http://www.sciencemag.org/rss/current.xml'],
-    ['Nature AOP', 'http://feeds.nature.com/nature/rss/aop'],
-    ['Nature', 'http://feeds.nature.com/nature/rss/current'],
-    ['Nat. Phys. AOP', 'http://feeds.nature.com/nphys/rss/aop'],
-    ['Nature Physics', 'http://feeds.nature.com/nphys/rss/current'],
-    ['PRX', 'http://feeds.aps.org/rss/recent/prx.xml'],
-    ['PRL', 'http://feeds.aps.org/rss/recent/prl.xml'],
-    ['PRB', 'http://feeds.aps.org/rss/recent/prb.xml'],
-    ['APL', 'http://scitation.aip.org/rss/content/aip/journal/apl/latestarticles?fmt=rss'],
-    ['Phys Rev Applied', 'http://feeds.aps.org/rss/recent/prapplied.xml'],
-    ['Nature Comm.', 'http://feeds.nature.com/ncomms/rss/current'],
-    ['Science Advances', 'http://advances.sciencemag.org/rss/current.xml'],
-    ['NJP', 'http://iopscience.iop.org/1367-2630/?rss=1'],
+    # APS
+    ['PRL', 'https://feeds.aps.org/rss/recent/prl.xml'],
+    ['PRX', 'https://feeds.aps.org/rss/recent/prx.xml'],
+    ['PRX Quantum', 'https://feeds.aps.org/rss/recent/prxquantum.xml'],
+    ['Phys. Rev. Applied', 'https://feeds.aps.org/rss/recent/prapplied.xml'],
+    ['Phys. Rev. Research', 'https://feeds.aps.org/rss/recent/prresearch.xml'],
+    ['PRB', 'https://feeds.aps.org/rss/recent/prb.xml'],
+
+    # Nature family. The main feeds only carry the ~8 newest items, so the subject feeds
+    # (titles only, no authors or abstracts) fill in the papers that scroll off.
+    ['Nature', 'https://www.nature.com/nature.rss'],
+    ['Nature Physics', 'https://www.nature.com/nphys.rss'],
+    ['Nature Physics (quantum physics subject)', 'https://www.nature.com/subjects/quantum-physics/nphys.rss'],
+    ['Nature Comm.', 'https://www.nature.com/ncomms.rss'],
+    ['Nature Comm. (physics subject)', 'https://www.nature.com/subjects/physics/ncomms.rss'],
+    ['Nature Comm. (quantum information subject)', 'https://www.nature.com/subjects/quantum-information/ncomms.rss'],
+    ['npj Quantum Information', 'https://www.nature.com/npjqi.rss'],
+
+    # Science
+    ['Science', 'https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science'],
+    ['Science First Release', 'https://www.science.org/action/showFeed?type=axatoc&feed=rss&jc=science'],
+    ['Science Advances', 'https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=sciadv'],
+
+    # Others
+    ['Quantum', 'https://quantum-journal.org/feed/'],
+    ['NJP', 'https://iopscience.iop.org/journal/rss/1367-2630'],
+    ['APL', 'https://pubs.aip.org/rss/site_1000017/1000011.xml'],  # current issue; no author names in this feed
+
+    # arXiv
     ['Arxiv: Quant-Ph', 'https://export.arxiv.org/rss/quant-ph'],
     ['Arxiv: Cond-Mat', 'https://export.arxiv.org/rss/cond-mat'],
 ]
@@ -45,42 +62,41 @@ with open('latestRunDateTime', 'w') as f:
     f.write(dateOfExecution)
 
 
-summariesAndLengths = []
-VIsummariesAndLengths = []
-listOfArxivIDsSoFar = []  # For removing duplicate Arxiv entries (eg, listed as both cond-mat and quant-ph); executiveSummary appends to it in place
+seenPaperIDs = set()  # papers already listed (any feed, either pass); executiveSummary adds to it
 
-# Get summary of very interesting entries only
-for feedName, feedURL in feedURLsAndNames:
-    result = executiveSummary(feedURL, feedName, latestExecutionDate, listOfArxivIDsSoFar, True)
-    VIsummariesAndLengths.append(result[:-1])
-
-VIsummaries = [summary for (summary, numEntries) in VIsummariesAndLengths]
+# Get summary of very interesting entries only (author matches)
+VIsummariesAndLengths = [executiveSummary(feedURL, feedName, latestExecutionDate, seenPaperIDs, True)
+                         for feedName, feedURL in feedURLsAndNames]
+VIsummaries = [summary for (summary, numEntries) in VIsummariesAndLengths if summary != '']
 numVIEntriesTotal = sum(numEntries for (summary, numEntries) in VIsummariesAndLengths)
 
-# Get summary of moderately interesting entries only
-for feedName, feedURL in feedURLsAndNames:
-    result = executiveSummary(feedURL, feedName, latestExecutionDate, listOfArxivIDsSoFar, False)
-    summariesAndLengths.append(result[:-1])
-
-summaries = [summary for (summary, numEntries) in summariesAndLengths]
+# Get summary of moderately interesting entries only (keyword matches)
+summariesAndLengths = [executiveSummary(feedURL, feedName, latestExecutionDate, seenPaperIDs, False)
+                       for feedName, feedURL in feedURLsAndNames]
+summaries = [summary for (summary, numEntries) in summariesAndLengths if summary != '']
 numOtherEntriesTotal = sum(numEntries for (summary, numEntries) in summariesAndLengths)
 
+# Feeds that returned nothing usable (dead URL, server error, bot-check page, ...)
+deadFeeds = [(feedName, feedProblem(feedURL)) for feedName, feedURL in feedURLsAndNames if feedProblem(feedURL)]
+deadFeedWarning = ''
+if deadFeeds:
+    deadFeedWarning = ("\n\n*** WARNING: no data received from %d of %d feeds -- their URLs may need updating "
+                       "(in physicsRSSreaderMain.py):\n" % (len(deadFeeds), len(feedURLsAndNames)))
+    deadFeedWarning += "".join("    - %s: %s\n" % (name, problem) for name, problem in deadFeeds)
+    print(deadFeedWarning)
 
-# Drop feeds with no matching entries
-VIsummaries = [s for s in VIsummaries if s != '']
-summaries = [s for s in summaries if s != '']
 
-numVISummaries = len(VIsummaries)  # number of "very interesting" (author match) summaries
-numSummaries = len(summaries)  # number of "interesting" (keyword match) summaries
-
-
-if numVISummaries + numSummaries >= 1:
+if VIsummaries or summaries or deadFeeds:
     summarySum = "Select publications from " + str(latestExecutionDate) + " to " + str(dateOfExecution) + ":\n\n"
-    summarySum += "-~-PROBABLY OF INTEREST (author matches)-~-\n\n"
-    summarySum += "\n".join(VIsummaries)
-    summarySum += "\n"
-    summarySum += "-~-~-~-POSSIBLY OF INTEREST (keyword matches)-~-~-~-\n\n"
-    summarySum += "\n".join(summaries)
+    if VIsummaries or summaries:
+        summarySum += "-~-PROBABLY OF INTEREST (author matches)-~-\n\n"
+        summarySum += "\n".join(VIsummaries)
+        summarySum += "\n"
+        summarySum += "-~-~-~-POSSIBLY OF INTEREST (keyword matches)-~-~-~-\n\n"
+        summarySum += "\n".join(summaries)
+    else:
+        summarySum += "No new matching publications.\n"
+    summarySum += deadFeedWarning
 
     # summarySum += "\n \n" + "Want off this list? Send your request to aeddins@berkeley.edu. (Or just block the address cqedRSSscraper@gmail.com)."
 

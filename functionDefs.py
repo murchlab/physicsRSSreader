@@ -9,17 +9,42 @@ from email.mime.text import MIMEText  # Import the email modules we'll need
 from unicodedata import normalize
 
 
-def myFormat(text):
-    # Remove punctuation, capitalization for checking for matches to keywords.
-    return re.sub(r'[^\w\s]', '', text.lower())
-
-
 cleanr = re.compile('<.*?>')
+
+_nonDecomposing = str.maketrans({'ø': 'o', 'Ø': 'O', 'ł': 'l', 'Ł': 'L', 'đ': 'd', 'ß': 'ss', 'æ': 'ae', 'Æ': 'AE'})
+
+
+def foldAccents(text):
+    return normalize('NFKD', text.translate(_nonDecomposing)).encode('ascii', 'ignore').decode('ascii')
+
+
+def myFormat(text):
+    # Lowercase, fold accents, and turn hyphens/punctuation into single spaces for keyword matching,
+    # so "Fault-Tolerant" -> "fault tolerant".
+    return re.sub(r'[\W_]+', ' ', foldAccents(text).lower()).strip()
+
+
+def keywordPattern(words):
+    # Whole-word match with optional plural ("transmon" -> "transmons"); a trailing * makes it a prefix
+    # ("error correct*" -> "error correction"). Either way "ion" won't match inside "dimension".
+    alternatives = []
+    for w in words:
+        if w.endswith('*'):
+            alternatives.append(re.escape(myFormat(w[:-1])))
+        else:
+            alternatives.append(re.escape(myFormat(w)) + r'(?:s|es)?\b')
+    return re.compile(r'\b(?:' + '|'.join(alternatives) + ')')
+
+
+titlePattern = keywordPattern(titlelist)
+abstractPattern = keywordPattern(wordlist)
 
 
 def myAuthorFormat(text):
     if text.strip() == '':
         return ''
+    # Fold accents so "Müller", "M\"uller" (arXiv LaTeX) and "Muller" all compare equal.
+    text = foldAccents(text)
     # Remove punctuation, capitalization for checking for matches to keywords.
     text = text.replace('.', ' ')  # sometimes initials aren't separated by spaces in listings
     text = text.replace('  ', ' ')  # remove any double spaces created by previous line
@@ -64,8 +89,8 @@ def passes_filter(entry, latestExecutionDate, getVeryInterestingEntries):
     else:
         summary = entry.get('summary', '')
         title = entry.get('title', '')
-        isInteresting = (any(myFormat(word) in myFormat(summary) for word in wordlist)
-                         or any(myFormat(titleword) in myFormat(title) for titleword in titlelist))
+        isInteresting = bool(abstractPattern.search(myFormat(strip_html(summary)))
+                             or titlePattern.search(myFormat(strip_html(title))))
 
     # Get date of RSS entry, if possible
     # (dict.get bypasses feedparser's deprecated updated->published remapping)
@@ -99,6 +124,42 @@ def arxivID(entry):
     return re.sub(r'v\d+$', '', entry.link.rstrip('/').split('/abs/')[-1])
 
 
+def paperID(entry):
+    # Key used to drop the same paper showing up in several feeds (arXiv quant-ph + cond-mat,
+    # Nature main feed + Nature subject feed, ...).
+    link = entry.get('link', '')
+    if 'arxiv.org/abs/' in link:
+        return 'arxiv:' + arxivID(entry)
+    link = link.split('?')[0].split('#')[0].rstrip('/')
+    return re.sub(r'^http://', 'https://', link)
+
+
+_feedCache = {}
+
+
+def fetchFeed(feedURL):
+    # Each feed is downloaded once per run (it is used by both the author pass and the keyword pass).
+    if feedURL not in _feedCache:
+        try:
+            _feedCache[feedURL] = feedparser.parse(feedURL)
+        except Exception as e:
+            _feedCache[feedURL] = feedparser.FeedParserDict(entries=[], bozo=1, bozo_exception=e)
+    return _feedCache[feedURL]
+
+
+def feedProblem(feedURL):
+    # Returns a short description of what went wrong if a feed gave us nothing usable, else None.
+    feed = fetchFeed(feedURL)
+    status = feed.get('status')
+    if status is not None and status >= 400:
+        return 'HTTP error %d' % status
+    if len(feed.entries) == 0:
+        if feed.get('bozo'):
+            return 'not a valid feed (%s)' % type(feed.get('bozo_exception')).__name__
+        return 'feed is empty'
+    return None
+
+
 def cleanDescription(text):
     # arXiv abstracts start with "arXiv:2611.17417v1 Announce Type: new \nAbstract: "; drop that prefix.
     text = re.sub(r'^\s*arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*', '', text)
@@ -110,42 +171,40 @@ def unicodeToAscii(uStr):
     return normalize('NFKD', uStr).encode('ascii', 'ignore').decode('ascii')
 
 
-def executiveSummary(feedURL, feedNameString, latestExecutionDate, listOfArxivIDsSoFar, getVeryInterestingEntries):
+def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs, getVeryInterestingEntries):
+    # seenPaperIDs is shared across all feeds and both passes; papers already listed are skipped.
     print("Now checking: " + feedNameString)
-    feed = feedparser.parse(feedURL)
+    feed = fetchFeed(feedURL)
 
-    filtered_entries = [entry for entry in feed.entries if passes_filter(entry, latestExecutionDate, getVeryInterestingEntries)]
-    if len(filtered_entries) == 0:
-        return ('', 0, listOfArxivIDsSoFar)
-
-    if 'ARXIV' in feedNameString.upper():
-        ## Remove duplicate entries (eg, entries listed in both Q. Phys. and Cond.Mat.):
-        uniqueEntries = []
-        for entry in filtered_entries:
-            thisArxivID = arxivID(entry)
-            if thisArxivID not in listOfArxivIDsSoFar:
-                listOfArxivIDsSoFar.append(thisArxivID)
-                uniqueEntries.append(entry)
-        filtered_entries = uniqueEntries
+    filtered_entries = []
+    for entry in feed.entries:
+        if not passes_filter(entry, latestExecutionDate, getVeryInterestingEntries):
+            continue
+        thisID = paperID(entry)
+        if thisID:
+            if thisID in seenPaperIDs:
+                continue
+            seenPaperIDs.add(thisID)
+        filtered_entries.append(entry)
 
     numFilteredEntries = len(filtered_entries)
     if numFilteredEntries == 0:
-        return ('', 0, listOfArxivIDsSoFar)
+        return ('', 0)
 
     ## Assemble the large summary string:
     largestring = "--------------- " + feedNameString + " ---------------"
     largestring = largestring + "\n"
 
     for entry in filtered_entries:
-        try:
-            largestring += "\n" + strip_html(entry.title) + "\n \n \t" + strip_html(entry.author) + "\n \t" + entry.link + "\n \n" + cleanDescription(entry.description) + "\n"
-        except AttributeError:
-            try:
-                largestring += "\n" + strip_html(entry.title) + "\n \n \t" + entry.link + "\n \n" + cleanDescription(entry.description) + "\n"
-            except AttributeError:
-                pass
+        largestring += "\n" + strip_html(entry.get('title', '(no title)')) + "\n \n"
+        if entry.get('author'):
+            largestring += " \t" + strip_html(entry.author) + "\n"
+        largestring += " \t" + entry.get('link', '') + "\n \n"
+        description = cleanDescription(entry.get('description', '')).strip()
+        if description:
+            largestring += description + "\n"
 
-    return (unicodeToAscii(largestring), numFilteredEntries, listOfArxivIDsSoFar)
+    return (unicodeToAscii(largestring), numFilteredEntries)
 
 
 def sendSummaryEmails(recipientList, message, numVIentries, numOtherEntries):
