@@ -2,17 +2,34 @@
 
 # Revision: November 16, 2026 (ported to Python 3)
 
+import argparse
+import datetime as dt
 import sys
 import time
 
-from functionDefs import executiveSummary, feedProblem, sendSummaryEmails
+from functionDefs import executiveSummary, feedProblem, sendSummaryEmails, buildEmail
 from recipients import recipientsList
 
+parser = argparse.ArgumentParser(description='Physics RSS digest. With no options: normal daily run.')
+parser.add_argument('--test', metavar='EMAIL',
+                    help='send the digest only to EMAIL; does not read or update latestRunDateTime')
+parser.add_argument('--preview', metavar='FILE.eml',
+                    help='write the email to FILE.eml (open it in Outlook/Thunderbird) instead of sending; '
+                         'does not update latestRunDateTime')
+parser.add_argument('--since', metavar='YYYYMMDD', type=int,
+                    help='include papers from this date on (default: last run date; '
+                         'with --test/--preview: 3 days ago)')
+args = parser.parse_args()
+isTrialRun = bool(args.test or args.preview)
 
-with open('latestRunDateTime', 'r') as f:
-    latestExecutionDate = int(f.read())
+if args.since:
+    latestExecutionDate = args.since
+elif isTrialRun:
+    latestExecutionDate = int((dt.date.today() - dt.timedelta(days=3)).strftime('%Y%m%d'))
+else:
+    with open('latestRunDateTime', 'r') as f:
+        latestExecutionDate = int(f.read())
 
-# latestExecutionDate = 20220207
 print(latestExecutionDate)
 
 
@@ -55,11 +72,11 @@ feedURLsAndNames = [
 
 dateOfExecution = time.strftime('%Y%m%d')
 
-if int(dateOfExecution) == latestExecutionDate:
-    sys.exit()
-
-with open('latestRunDateTime', 'w') as f:
-    f.write(dateOfExecution)
+if not isTrialRun:
+    if int(dateOfExecution) == latestExecutionDate:
+        sys.exit()
+    with open('latestRunDateTime', 'w') as f:
+        f.write(dateOfExecution)
 
 
 seenPaperIDs = set()  # papers already listed (any feed, either pass); executiveSummary adds to it
@@ -101,12 +118,21 @@ if VIsummaries or summaries or deadFeeds:
     # summarySum += "\n \n" + "Want off this list? Send your request to aeddins@berkeley.edu. (Or just block the address cqedRSSscraper@gmail.com)."
 
     print(summarySum)
-    with open('rssReaderLog', 'w', encoding='utf-8') as f:
-        f.write('\n\n\n\n\n')
-        f.write(dateOfExecution)
-        f.write(summarySum)
 
-    sendSummaryEmails(recipientsList, summarySum, numVIEntriesTotal, numOtherEntriesTotal)
+    if args.preview:
+        msg = buildEmail(summarySum, numVIEntriesTotal, numOtherEntriesTotal, 'physics-digest@preview', args.test or 'preview@preview')
+        with open(args.preview, 'w', encoding='utf-8') as f:
+            f.write(msg.as_string())
+        print('Wrote preview to ' + args.preview)
+    elif args.test:
+        sendSummaryEmails([args.test], summarySum, numVIEntriesTotal, numOtherEntriesTotal)
+        print('Sent test digest to ' + args.test)
+    else:
+        with open('rssReaderLog', 'w', encoding='utf-8') as f:
+            f.write('\n\n\n\n\n')
+            f.write(dateOfExecution)
+            f.write(summarySum)
+        sendSummaryEmails(recipientsList, summarySum, numVIEntriesTotal, numOtherEntriesTotal)
 else:
     with open('rssReaderLog', 'w', encoding='utf-8') as f:
         f.write('\n\n\n\n\n')

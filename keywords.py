@@ -232,7 +232,6 @@ authors = [
     "Christopher Eichler",
     "Leonardo DiCarlo",
     "Gary Steele",
-    "Christian Andersen",
     "Benjamin Huard",
     "Audrey Bienfait",
     "Nicolas Roch",
@@ -412,6 +411,7 @@ authors = [
 #   "Chen Wang",      # -> "c wang"
 #   "Jungsang Kim",   # -> "j kim"
 #   "Kihwan Kim",     # -> "k kim"
+#   "Christian Andersen", # -> "c andersen"  (very common Danish surname)
 #   "Andrew Wilson",  # -> "a wilson"
 #   "Xuedong Hu",     # -> "x hu"
 #   "Xiaobo Zhu",     # -> "x zhu"

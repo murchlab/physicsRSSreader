@@ -1,13 +1,18 @@
 ## Function definitions for the physics RSS feed reader.
 from keywords import titlelist, wordlist, authors
+import os
 import re
 import feedparser
 import smtplib  # Import smtplib for the actual sending function
+import socket
 import time
 import datetime as dt
 from email.mime.text import MIMEText  # Import the email modules we'll need
 from unicodedata import normalize
 
+# feedparser has no timeout of its own; without this one unresponsive journal server can hang the whole run.
+# A feed that times out shows up in the dead-feed warning instead.
+socket.setdefaulttimeout(30)
 
 cleanr = re.compile('<.*?>')
 
@@ -168,7 +173,7 @@ def cleanDescription(text):
 
 def unicodeToAscii(uStr):
     # Strip accents etc. so the email body is plain ASCII (e.g. "Schrödinger" -> "Schrodinger").
-    return normalize('NFKD', uStr).encode('ascii', 'ignore').decode('ascii')
+    return foldAccents(uStr)
 
 
 def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs, getVeryInterestingEntries):
@@ -207,25 +212,33 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs,
     return (unicodeToAscii(largestring), numFilteredEntries)
 
 
+def buildEmail(message, numVIentries, numOtherEntries, sender, recipient):
+    msg = MIMEText(message, 'plain', 'utf-8')
+    msg['Subject'] = "cQED Digest " + time.strftime("%m/%d/%Y") + " [" + str(numVIentries) + "," + str(numOtherEntries) + "]"
+    msg['From'] = sender
+    msg['To'] = recipient
+    return msg
+
+
 def sendSummaryEmails(recipientList, message, numVIentries, numOtherEntries):
+    # SMTP settings come from environment variables so no password lives in the repo:
+    #   SMTP_USER, SMTP_PASSWORD (required; for Gmail use an app password),
+    #   SMTP_HOST (default smtp.gmail.com), SMTP_PORT (default 587), SMTP_SENDER (default SMTP_USER)
+    username = os.environ.get('SMTP_USER')
+    password = os.environ.get('SMTP_PASSWORD')
+    if not username or not password:
+        raise RuntimeError('Set the SMTP_USER and SMTP_PASSWORD environment variables to send email.')
+    host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
+    port = int(os.environ.get('SMTP_PORT', '587'))
+    sender = os.environ.get('SMTP_SENDER', username)
 
-    sender = 'sender@example.com'
-
-    username = 'example@gmail.com'  # for gmail include "@gmail.com"
-    powned = '******'  # thePwfor your account
-    s = smtplib.SMTP('example.com', 587)
-
+    s = smtplib.SMTP(host, port)
     s.ehlo()
     s.starttls()
-    s.login(username, powned)
-
-    subject = "cQED Digest " + time.strftime("%m/%d/%Y") + " [" + str(numVIentries) + "," + str(numOtherEntries) + "]"
+    s.login(username, password)
 
     for recipient in recipientList:
-        msg = MIMEText(message, 'plain', 'utf-8')
-        msg['Subject'] = subject
-        msg['From'] = sender
-        msg['To'] = recipient
+        msg = buildEmail(message, numVIentries, numOtherEntries, sender, recipient)
         s.sendmail(sender, [recipient], msg.as_string())
 
     s.quit()
