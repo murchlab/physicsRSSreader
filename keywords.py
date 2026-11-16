@@ -10,7 +10,7 @@ titlelist = ["Josephson",
              "JPC",
              "qubit",
              "squeezing",
-             "squeezed"
+             "squeezed",
              "quantum limit",
              "quantum limited",
              "phase preserving",
@@ -133,6 +133,6 @@ authors = [
 #authors = generateInitialsCombinationsMultiple(authors)
 
 # Make case insensitive:
-titlelist = map(str.lower,titlelist)
-wordlist = map(str.lower,wordlist)
-authors = map(str.lower,authors)
+titlelist = [word.lower() for word in titlelist]
+wordlist = [word.lower() for word in wordlist]
+authors = [author.lower() for author in authors]

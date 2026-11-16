@@ -2,7 +2,7 @@
 Python based RSS reader for quantum physics.
 
 # Requirements
-python 2.7
+Python 3.8+ and `feedparser` (`pip install feedparser`)
 
 # Configuration
 - Edit `recipients.py` to include a list of email addresses.
@@ -12,6 +12,6 @@ python 2.7
 - (Optional) Use the crontab service on a Linux server to host the script. Check out `physicsRSScronJob.txt` for an example configured in a anaconda env.
 
 # Get started
-Use python 2.7 to run
+Use Python 3 to run
 
 `python physicsRSSreaderMain.py`
