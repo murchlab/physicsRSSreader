@@ -67,21 +67,21 @@ def passes_filter(entry, latestExecutionDate, getVeryInterestingEntries):
         isInteresting = (any(myFormat(word) in myFormat(summary) for word in wordlist)
                          or any(myFormat(titleword) in myFormat(title) for titleword in titlelist))
 
-    isArxiv = False
-
     # Get date of RSS entry, if possible
-    try:
-        temp = entry.updated_parsed
-    except AttributeError:
-        # Only the Arxiv feed is known not to give updated_parsed values (ie, dates for each entry).
-        # Since the Arxiv RSS is refreshed daily anyway, we will assume these entries are new (except on weekends).
-        isArxiv = True
-    if isArxiv:
-        isWeekday = dt.datetime.today().weekday() < 5
-        isJustAnUpdate = entry.title[-8:-1] == "UPDATED"
-        isNew = isWeekday and not isJustAnUpdate
+    # (dict.get bypasses feedparser's deprecated updated->published remapping)
+    dateTuple = dict.get(entry, 'updated_parsed') or dict.get(entry, 'published_parsed')
+    pubDate = int('%04d%02d%02d' % tuple(dateTuple[0:3])) if dateTuple else None
+
+    announceType = entry.get('arxiv_announce_type')
+    if announceType is not None:
+        # arXiv feed (format since Jan 2024). Each entry is dated with the day of the announcement.
+        # Keep new submissions and cross-lists; skip revised versions ('replace', 'replace-cross').
+        # Strict '>' because the feed keeps Friday's listing over the weekend (skipDays).
+        isNew = announceType in ('new', 'cross') and pubDate is not None and pubDate > latestExecutionDate
+    elif pubDate is None:
+        # Feed gives no dates; assume new on weekdays.
+        isNew = dt.datetime.today().weekday() < 5
     else:
-        pubDate = int('%04d%02d%02d' % tuple(temp[0:3]))
         isNew = pubDate >= latestExecutionDate
 
     if getVeryInterestingEntries:
@@ -92,6 +92,17 @@ def passes_filter(entry, latestExecutionDate, getVeryInterestingEntries):
 
 def strip_html(text):
     return re.sub('<[^<]+?>', '', text)
+
+
+def arxivID(entry):
+    # e.g. link 'https://arxiv.org/abs/2611.17417' -> '2611.17417' (version suffix dropped if present)
+    return re.sub(r'v\d+$', '', entry.link.rstrip('/').split('/abs/')[-1])
+
+
+def cleanDescription(text):
+    # arXiv abstracts start with "arXiv:2611.17417v1 Announce Type: new \nAbstract: "; drop that prefix.
+    text = re.sub(r'^\s*arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*', '', text)
+    return strip_html(text)
 
 
 def unicodeToAscii(uStr):
@@ -109,17 +120,13 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, listOfArxivID
 
     if 'ARXIV' in feedNameString.upper():
         ## Remove duplicate entries (eg, entries listed in both Q. Phys. and Cond.Mat.):
-        dexesOfDuplicates = []
-        for FEdex, entry in enumerate(filtered_entries):
-            thisTitle = strip_html(entry.title)
-            idStrStartDex = thisTitle.find('(arXiv:') + len('(arXiv:')
-            idStrStopDex = thisTitle.find(' ', idStrStartDex)
-            thisArxivID = thisTitle[idStrStartDex:idStrStopDex]
-            if thisArxivID in listOfArxivIDsSoFar:
-                dexesOfDuplicates.append(FEdex)
-            else:
+        uniqueEntries = []
+        for entry in filtered_entries:
+            thisArxivID = arxivID(entry)
+            if thisArxivID not in listOfArxivIDsSoFar:
                 listOfArxivIDsSoFar.append(thisArxivID)
-        filtered_entries = [v for i, v in enumerate(filtered_entries) if i not in dexesOfDuplicates]
+                uniqueEntries.append(entry)
+        filtered_entries = uniqueEntries
 
     numFilteredEntries = len(filtered_entries)
     if numFilteredEntries == 0:
@@ -131,10 +138,10 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, listOfArxivID
 
     for entry in filtered_entries:
         try:
-            largestring += "\n" + strip_html(entry.title) + "\n \n \t" + strip_html(entry.author) + "\n \t" + entry.link + "\n \n" + strip_html(entry.description) + "\n"
+            largestring += "\n" + strip_html(entry.title) + "\n \n \t" + strip_html(entry.author) + "\n \t" + entry.link + "\n \n" + cleanDescription(entry.description) + "\n"
         except AttributeError:
             try:
-                largestring += "\n" + strip_html(entry.title) + "\n \n \t" + entry.link + "\n \n" + strip_html(entry.description) + "\n"
+                largestring += "\n" + strip_html(entry.title) + "\n \n \t" + entry.link + "\n \n" + cleanDescription(entry.description) + "\n"
             except AttributeError:
                 pass
 

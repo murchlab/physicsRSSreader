@@ -31,8 +31,8 @@ feedURLsAndNames = [
     ['Nature Comm.', 'http://feeds.nature.com/ncomms/rss/current'],
     ['Science Advances', 'http://advances.sciencemag.org/rss/current.xml'],
     ['NJP', 'http://iopscience.iop.org/1367-2630/?rss=1'],
-    ['Arxiv: Quant-Ph', 'http://arxiv.org/rss/quant-ph'],
-    ['Arxiv: Cond-Mat', 'http://export.arxiv.org/rss/cond-mat'],
+    ['Arxiv: Quant-Ph', 'https://export.arxiv.org/rss/quant-ph'],
+    ['Arxiv: Cond-Mat', 'https://export.arxiv.org/rss/cond-mat'],
 ]
 
 
@@ -47,12 +47,11 @@ with open('latestRunDateTime', 'w') as f:
 
 summariesAndLengths = []
 VIsummariesAndLengths = []
-listOfArxivIDsSoFar = []  # For use removing duplicate Arxiv entries (eg, listed as both cond-mat and quant-phys)
+listOfArxivIDsSoFar = []  # For removing duplicate Arxiv entries (eg, listed as both cond-mat and quant-ph); executiveSummary appends to it in place
 
 # Get summary of very interesting entries only
 for feedName, feedURL in feedURLsAndNames:
     result = executiveSummary(feedURL, feedName, latestExecutionDate, listOfArxivIDsSoFar, True)
-    listOfArxivIDsSoFar += result[-1]
     VIsummariesAndLengths.append(result[:-1])
 
 VIsummaries = [summary for (summary, numEntries) in VIsummariesAndLengths]
@@ -61,7 +60,6 @@ numVIEntriesTotal = sum(numEntries for (summary, numEntries) in VIsummariesAndLe
 # Get summary of moderately interesting entries only
 for feedName, feedURL in feedURLsAndNames:
     result = executiveSummary(feedURL, feedName, latestExecutionDate, listOfArxivIDsSoFar, False)
-    listOfArxivIDsSoFar += result[-1]
     summariesAndLengths.append(result[:-1])
 
 summaries = [summary for (summary, numEntries) in summariesAndLengths]
