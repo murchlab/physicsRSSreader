@@ -6,7 +6,8 @@ papers by authors you follow ("probably of interest") and papers matching your k
 Python 3.8+ and `feedparser` (`pip install feedparser`)
 
 # Configuration
-- `recipients.py`: list of email addresses that get the digest.
+- `recipients.txt`: email addresses that get the digest, one per line (lines starting with `#` are ignored).
+  This file is git-ignored so the list stays private.
 - `email.txt`: the email account that sends it. Line 1 is the Gmail address and line 2 is its
   [app password](https://myaccount.google.com/apppasswords), not the normal password. This file is git-ignored;
   never commit it. Lines starting with `#` are ignored. To use a mail server other than Gmail, add
@@ -18,7 +19,7 @@ Python 3.8+ and `feedparser` (`pip install feedparser`)
   before the first run, or the first digest will contain everything currently in every feed.
 
 # Running
-Normal daily run (emails everyone in `recipients.py`, updates `latestRunDateTime`):
+Normal daily run (emails everyone in `recipients.txt`, updates `latestRunDateTime`):
 
 `python physicsRSSreaderMain.py`
 
@@ -30,4 +31,5 @@ Trying it out (these never touch `latestRunDateTime`; by default they cover the 
 
 # Scheduling (Linux cron)
 See `physicsRSScronJob.txt` for an example that activates a conda env, `cd`s into this folder and runs the script
-every morning. Copy `email.txt` to the server next to the script and make it private (`chmod 600 email.txt`).
+every morning. Copy `email.txt` and `recipients.txt` to the server next to the script and make them private
+(`chmod 600 email.txt recipients.txt`).

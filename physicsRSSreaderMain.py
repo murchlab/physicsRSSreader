@@ -8,7 +8,7 @@ import sys
 import time
 
 from functionDefs import executiveSummary, feedProblem, sendSummaryEmails, buildEmail, plainText
-from recipients import recipientsList
+from recipients import loadRecipients
 
 parser = argparse.ArgumentParser(description='Physics RSS digest. With no options: normal daily run.')
 parser.add_argument('--test', metavar='EMAIL',
@@ -21,6 +21,8 @@ parser.add_argument('--since', metavar='YYYYMMDD', type=int,
                          'with --test/--preview: 3 days ago)')
 args = parser.parse_args()
 isTrialRun = bool(args.test or args.preview)
+# Load the recipient list up front so a missing recipients.txt stops the run before anything else happens.
+recipientsList = None if isTrialRun else loadRecipients()
 
 if args.since:
     latestExecutionDate = args.since
