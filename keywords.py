@@ -104,6 +104,9 @@ keywords = [
     "eNe qubit",
     "eHe qubit",
 
+    ######## Dark matter: ADMX only
+    "ADMX",
+
     ######## Neutral atoms
     "Rydberg",
     "neutral atom",
@@ -361,6 +364,15 @@ authors = [
     "Michelle Simmons",
     "Arne Laucht",
     "Seigo Tarucha",
+
+    ######## ADMX
+    "Gray Rybka",
+    "Gianpaolo Carosi",
+    "Leslie Rosenberg",
+    "Andrew Sonnenschein",
+    "Karl van Bibber",
+    "Chelsea Bartram",
+    "Daniel Bowring",
 
     ######## Theory
     "K. Birgitta Whaley",

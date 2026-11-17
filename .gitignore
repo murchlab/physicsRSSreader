@@ -2,5 +2,10 @@
 .idea
 .DS_Store
 rssReaderLog
-
+email.txt
+*.txt
 digest_preview*
+smtpSettings.ini
+
+# digest login (never commit)
+email.txt

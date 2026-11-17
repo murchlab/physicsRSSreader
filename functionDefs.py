@@ -1,5 +1,6 @@
 ## Function definitions for the physics RSS feed reader.
 from keywords import titlelist, wordlist, authors
+import configparser
 import os
 import re
 import feedparser
@@ -7,8 +8,15 @@ import smtplib  # Import smtplib for the actual sending function
 import socket
 import time
 import datetime as dt
+import html
+from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText  # Import the email modules we'll need
 from unicodedata import normalize
+
+# Invisible markers put around paper titles in the digest text; buildEmail turns them into bold in the
+# HTML email and plainText() removes them everywhere else.
+TITLE_START = '\x02'
+TITLE_END = '\x03'
 
 # feedparser has no timeout of its own; without this one unresponsive journal server can hang the whole run.
 # A feed that times out shows up in the dead-feed warning instead.
@@ -201,7 +209,8 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs,
     largestring = largestring + "\n"
 
     for entry in filtered_entries:
-        largestring += "\n" + strip_html(entry.get('title', '(no title)')) + "\n \n"
+        title = ' '.join(strip_html(entry.get('title', '(no title)')).split())
+        largestring += "\n" + TITLE_START + title + TITLE_END + "\n \n"
         if entry.get('author'):
             largestring += " \t" + strip_html(entry.author) + "\n"
         largestring += " \t" + entry.get('link', '') + "\n \n"
@@ -212,27 +221,87 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs,
     return (unicodeToAscii(largestring), numFilteredEntries)
 
 
+def plainText(message):
+    # Digest text without the title markers (for the plain-text email part, the log and the console).
+    return message.replace(TITLE_START, '').replace(TITLE_END, '')
+
+
+def htmlText(message):
+    # Same digest as HTML: titles bold, links clickable, line breaks kept.
+    text = html.escape(message, quote=False)
+    text = text.replace(TITLE_START, '<b>').replace(TITLE_END, '</b>')
+    text = re.sub(r'(https?://[^\s<>"]+)', r'<a href="\1">\1</a>', text)
+    return ('<html><body><div style="font-family: Arial, Helvetica, sans-serif; font-size: 14px; '
+            'white-space: pre-wrap;">' + text + '</div></body></html>')
+
+
 def buildEmail(message, numVIentries, numOtherEntries, sender, recipient):
-    msg = MIMEText(message, 'plain', 'utf-8')
+    # HTML version (bold titles) plus a plain-text fallback for mail clients that don't show HTML.
+    msg = MIMEMultipart('alternative')
+    msg.attach(MIMEText(plainText(message), 'plain', 'utf-8'))
+    msg.attach(MIMEText(htmlText(message), 'html', 'utf-8'))
     msg['Subject'] = "cQED Digest " + time.strftime("%m/%d/%Y") + " [" + str(numVIentries) + "," + str(numOtherEntries) + "]"
     msg['From'] = sender
     msg['To'] = recipient
     return msg
 
 
-def sendSummaryEmails(recipientList, message, numVIentries, numOtherEntries):
-    # SMTP settings come from environment variables so no password lives in the repo:
-    #   SMTP_USER, SMTP_PASSWORD (required; for Gmail use an app password),
-    #   SMTP_HOST (default smtp.gmail.com), SMTP_PORT (default 587), SMTP_SENDER (default SMTP_USER)
-    username = os.environ.get('SMTP_USER')
-    password = os.environ.get('SMTP_PASSWORD')
-    if not username or not password:
-        raise RuntimeError('Set the SMTP_USER and SMTP_PASSWORD environment variables to send email.')
-    host = os.environ.get('SMTP_HOST', 'smtp.gmail.com')
-    port = int(os.environ.get('SMTP_PORT', '587'))
-    sender = os.environ.get('SMTP_SENDER', username)
+_HERE = os.path.dirname(os.path.abspath(__file__))
+SMTP_SETTINGS_FILE = os.path.join(_HERE, 'smtpSettings.ini')
+EMAIL_FILE = os.path.join(_HERE, 'email.txt')
 
-    s = smtplib.SMTP(host, port)
+
+def readEmailFile(path):
+    # email.txt (git-ignored): first line = sending address, second line = (app) password.
+    # Optional "key = value" lines (host, port, sender) are also accepted. Lines starting with # are ignored.
+    settings = {}
+    plainLines = []
+    with open(path, encoding='utf-8-sig') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            key, sep, value = line.partition('=')
+            if sep and key.strip().lower() in ('user', 'email', 'password', 'host', 'port', 'sender'):
+                key = 'user' if key.strip().lower() == 'email' else key.strip().lower()
+                settings[key] = value.strip()
+            else:
+                plainLines.append(line)
+    if plainLines:
+        settings.setdefault('user', plainLines[0])
+    if len(plainLines) > 1:
+        settings.setdefault('password', plainLines[1])
+    return {k: v for k, v in settings.items() if v}
+
+
+def loadSmtpSettings():
+    # Login comes from email.txt (or smtpSettings.ini) next to this file -- both git-ignored.
+    # Any SMTP_USER / SMTP_PASSWORD / SMTP_HOST / SMTP_PORT / SMTP_SENDER environment variable overrides them.
+    settings = {'host': 'smtp.gmail.com', 'port': '587', 'user': '', 'password': '', 'sender': ''}
+    if os.path.exists(SMTP_SETTINGS_FILE):
+        parser = configparser.ConfigParser()
+        parser.read(SMTP_SETTINGS_FILE, encoding='utf-8')
+        if parser.has_section('smtp'):
+            settings.update({k: v.strip() for k, v in parser['smtp'].items() if v.strip()})
+    if os.path.exists(EMAIL_FILE):
+        settings.update(readEmailFile(EMAIL_FILE))
+    for key in settings:
+        if os.environ.get('SMTP_' + key.upper()):
+            settings[key] = os.environ['SMTP_' + key.upper()]
+    if not settings['user'] or not settings['password']:
+        raise RuntimeError('No email login found. Put the sending address on line 1 of email.txt and its app '
+                           'password on line 2 (or set the SMTP_USER and SMTP_PASSWORD environment variables).')
+    settings['password'] = settings['password'].replace(' ', '')  # Gmail shows app passwords as "abcd efgh ..."
+    settings['sender'] = settings['sender'] or settings['user']
+    settings['port'] = int(settings['port'])
+    return settings
+
+
+def sendSummaryEmails(recipientList, message, numVIentries, numOtherEntries):
+    smtp = loadSmtpSettings()
+    host, port, username, password, sender = smtp['host'], smtp['port'], smtp['user'], smtp['password'], smtp['sender']
+
+    s = smtplib.SMTP(host, port, timeout=60)
     s.ehlo()
     s.starttls()
     s.login(username, password)

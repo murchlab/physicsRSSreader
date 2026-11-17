@@ -7,7 +7,7 @@ import datetime as dt
 import sys
 import time
 
-from functionDefs import executiveSummary, feedProblem, sendSummaryEmails, buildEmail
+from functionDefs import executiveSummary, feedProblem, sendSummaryEmails, buildEmail, plainText
 from recipients import recipientsList
 
 parser = argparse.ArgumentParser(description='Physics RSS digest. With no options: normal daily run.')
@@ -40,6 +40,7 @@ feedURLsAndNames = [
     ['PRL', 'https://feeds.aps.org/rss/recent/prl.xml'],
     ['PRX', 'https://feeds.aps.org/rss/recent/prx.xml'],
     ['PRX Quantum', 'https://feeds.aps.org/rss/recent/prxquantum.xml'],
+    ['PRA', 'https://feeds.aps.org/rss/recent/pra.xml'],
     ['Phys. Rev. Applied', 'https://feeds.aps.org/rss/recent/prapplied.xml'],
     ['Phys. Rev. Research', 'https://feeds.aps.org/rss/recent/prresearch.xml'],
     ['PRB', 'https://feeds.aps.org/rss/recent/prb.xml'],
@@ -67,6 +68,8 @@ feedURLsAndNames = [
     # arXiv
     ['Arxiv: Quant-Ph', 'https://export.arxiv.org/rss/quant-ph'],
     ['Arxiv: Cond-Mat', 'https://export.arxiv.org/rss/cond-mat'],
+    ['Arxiv: Hep-Ex', 'https://export.arxiv.org/rss/hep-ex'],  # axion / dark-matter searches (ADMX etc.)
+    ['Arxiv: Physics.Ins-Det', 'https://export.arxiv.org/rss/physics.ins-det'],  # detectors, haloscopes, sensors
 ]
 
 
@@ -117,7 +120,7 @@ if VIsummaries or summaries or deadFeeds:
 
     # summarySum += "\n \n" + "Want off this list? Send your request to aeddins@berkeley.edu. (Or just block the address cqedRSSscraper@gmail.com)."
 
-    print(summarySum)
+    print(plainText(summarySum))
 
     if args.preview:
         msg = buildEmail(summarySum, numVIEntriesTotal, numOtherEntriesTotal, 'physics-digest@preview', args.test or 'preview@preview')
@@ -131,7 +134,7 @@ if VIsummaries or summaries or deadFeeds:
         with open('rssReaderLog', 'w', encoding='utf-8') as f:
             f.write('\n\n\n\n\n')
             f.write(dateOfExecution)
-            f.write(summarySum)
+            f.write(plainText(summarySum))
         sendSummaryEmails(recipientsList, summarySum, numVIEntriesTotal, numOtherEntriesTotal)
 else:
     with open('rssReaderLog', 'w', encoding='utf-8') as f:
