@@ -13,16 +13,21 @@ from recipients import loadRecipients
 parser = argparse.ArgumentParser(description='Physics RSS digest. With no options: normal daily run.')
 parser.add_argument('--test', metavar='EMAIL',
                     help='send the digest only to EMAIL; does not read or update latestRunDateTime')
+parser.add_argument('--test-all', action='store_true',
+                    help='send the digest to everyone in recipients.txt as a trial: '
+                         'does not read or update latestRunDateTime')
 parser.add_argument('--preview', metavar='FILE.eml',
                     help='write the email to FILE.eml (open it in Outlook/Thunderbird) instead of sending; '
                          'does not update latestRunDateTime')
 parser.add_argument('--since', metavar='YYYYMMDD', type=int,
                     help='include papers from this date on (default: last run date; '
-                         'with --test/--preview: 3 days ago)')
+                         'with --test/--test-all/--preview: 3 days ago)')
 args = parser.parse_args()
-isTrialRun = bool(args.test or args.preview)
+# Abstracts contain Greek letters etc.; don't let a non-UTF-8 console or log redirect crash the run.
+sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+isTrialRun = bool(args.test or args.test_all or args.preview)
 # Load the recipient list up front so a missing recipients.txt stops the run before anything else happens.
-recipientsList = None if isTrialRun else loadRecipients()
+recipientsList = None if (args.test or args.preview) else loadRecipients()
 
 if args.since:
     latestExecutionDate = args.since
@@ -68,10 +73,10 @@ feedURLsAndNames = [
     ['APL', 'https://pubs.aip.org/rss/site_1000017/1000011.xml'],  # current issue; no author names in this feed
 
     # arXiv
-    ['Arxiv: Quant-Ph', 'https://export.arxiv.org/rss/quant-ph'],
-    ['Arxiv: Cond-Mat', 'https://export.arxiv.org/rss/cond-mat'],
-    ['Arxiv: Hep-Ex', 'https://export.arxiv.org/rss/hep-ex'],  # axion / dark-matter searches (ADMX etc.)
-    ['Arxiv: Physics.Ins-Det', 'https://export.arxiv.org/rss/physics.ins-det'],  # detectors, haloscopes, sensors
+    ['Arxiv: Quant-Ph', 'https://rss.arxiv.org/rss/quant-ph'],
+    ['Arxiv: Cond-Mat', 'https://rss.arxiv.org/rss/cond-mat'],
+    ['Arxiv: Hep-Ex', 'https://rss.arxiv.org/rss/hep-ex'],  # axion / dark-matter searches (ADMX etc.)
+    ['Arxiv: Physics.Ins-Det', 'https://rss.arxiv.org/rss/physics.ins-det'],  # detectors, haloscopes, sensors
 ]
 
 
@@ -129,9 +134,10 @@ if VIsummaries or summaries or deadFeeds:
         with open(args.preview, 'w', encoding='utf-8') as f:
             f.write(msg.as_string())
         print('Wrote preview to ' + args.preview)
-    elif args.test:
-        sendSummaryEmails([args.test], summarySum, numVIEntriesTotal, numOtherEntriesTotal)
-        print('Sent test digest to ' + args.test)
+    elif args.test or args.test_all:
+        trialRecipients = [args.test] if args.test else recipientsList
+        sendSummaryEmails(trialRecipients, summarySum, numVIEntriesTotal, numOtherEntriesTotal)
+        print('Sent test digest to ' + ', '.join(trialRecipients))
     else:
         with open('rssReaderLog', 'w', encoding='utf-8') as f:
             f.write('\n\n\n\n\n')

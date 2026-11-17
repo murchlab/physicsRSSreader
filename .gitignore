@@ -10,3 +10,5 @@ smtpSettings.ini
 # digest login (never commit)
 email.txt
 recipients.txt
+digestRun.log
+rssReaderLog

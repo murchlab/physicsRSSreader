@@ -11,6 +11,7 @@ import datetime as dt
 import html
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText  # Import the email modules we'll need
+from email.utils import formataddr, formatdate, make_msgid
 from unicodedata import normalize
 
 # Invisible markers put around paper titles in the digest text; buildEmail turns them into bold in the
@@ -128,8 +129,24 @@ def passes_filter(entry, latestExecutionDate, getVeryInterestingEntries):
         return isInteresting and isNew
 
 
+# One MathML child: a single token (<mi>x</mi>, <mn>2</mn>, <mo>+</mo>) or an <mrow> with no nested <mrow>.
+_MATH_CHILD = r'\s*(<m[ion][^>]*>[^<]*</m[ion]>|<mrow>(?:(?!<mrow>).)*?</mrow>)\s*'
+_MATH_TWO_CHILDREN = {tag: re.compile('<' + tag + '>' + _MATH_CHILD + _MATH_CHILD + '</' + tag + '>', re.S)
+                      for tag in ('mfrac', 'msup', 'msub')}
+_MATH_JOINER = {'mfrac': '/', 'msup': '^', 'msub': '_'}
+
+
+def simplifyMathML(text):
+    # Abstracts with MathML: write simple fractions / powers / subscripts as a/b, a^b, a_b before the tags
+    # are stripped (otherwise "1/epsilon" comes out as "1ɛ"). Repeated a few times for nested cases.
+    for _ in range(3):
+        for tag, pattern in _MATH_TWO_CHILDREN.items():
+            text = pattern.sub(lambda m, j=_MATH_JOINER[tag]: '<mrow>' + m.group(1) + j + m.group(2) + '</mrow>', text)
+    return text
+
+
 def strip_html(text):
-    return re.sub('<[^<]+?>', '', text)
+    return re.sub('<[^<]+?>', '', simplifyMathML(text))
 
 
 def arxivID(entry):
@@ -174,9 +191,80 @@ def feedProblem(feedURL):
 
 
 def cleanDescription(text):
-    # arXiv abstracts start with "arXiv:2611.17417v1 Announce Type: new \nAbstract: "; drop that prefix.
+    # Remove the bits feeds put in front of the abstract, which would otherwise repeat the author line or
+    # just give the citation.
+    # arXiv: "arXiv:2611.17417v1 Announce Type: new \nAbstract: "
     text = re.sub(r'^\s*arXiv:\S+\s+Announce Type:\s*\S+\s*Abstract:\s*', '', text)
-    return strip_html(text)
+    # APS: "Author(s): A, B, and C<br />" (already shown on the author line)
+    text = re.sub(r'^\s*(?:<p>)?\s*Author\(s\):.*?(?:<br\s*/?>|</p>)', '', text, flags=re.S)
+    # Nature family: "<p>Nature Physics, Published online: 16 November 2026; <a ...>doi:...</a></p>"
+    text = re.sub(r'^\s*<p>[^<]*Published online:.*?</p>', '', text, flags=re.S)
+    # Science family: "Science, Volume 394, Issue 6825, Page 727-727, November 2026. <br />"
+    text = re.sub(r'^\s*[\w ]+,\s*(?:<a [^>]*>)?Volume \d+, Issue \d+(?:</a>)?.*?(?:<br\s*/?>|$)', '', text, flags=re.S)
+    # Quantum: "<p>Quantum 10, 2270 (2026).</p><a href=...>https://doi.org/...</a>"
+    text = re.sub(r'^\s*<p>Quantum \d+, \d+ \(\d{4}\)\.</p>\s*(?:<a [^>]*>.*?</a>)?', '', text, flags=re.S)
+    text = html.unescape(strip_html(text))
+    return re.sub(r'[ \t]+', ' ', text).strip()
+
+
+def entryDOI(entry):
+    doi = entry.get('prism_doi') or ''
+    if not doi:
+        ident = entry.get('dc_identifier') or ''
+        if ident.lower().startswith('doi:'):
+            doi = ident[4:]
+    return doi.strip()
+
+
+_USER_AGENT = 'Mozilla/5.0 (compatible; physics-RSS-digest)'
+
+
+def _download(url):
+    import urllib.request
+    request = urllib.request.Request(url, headers={'User-Agent': _USER_AGENT})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read().decode('utf-8', 'replace')
+
+
+def lookUpAbstract(entry):
+    # Nature-family and Science-family feeds don't include abstracts. Look the paper up by DOI in Crossref
+    # (which has abstracts for most Science / Nature research papers), then try the Nature article page.
+    # Only called for papers that matched, so it is a handful of requests per day. Returns '' if not found.
+    import json
+    link = entry.get('link', '')
+    if 'aps.org/' in link:
+        # APS feeds cut abstracts off at ~350 characters; the article page has the whole thing.
+        try:
+            time.sleep(1)  # be gentle with journals.aps.org
+            match = re.search(r'id="abstract-section-content"[^>]*>(.*?)</div>', _download(link), flags=re.S)
+            if match:
+                # The abstract div also holds the figure thumbnails ("See 3 more figures" button); drop them.
+                abstractHTML = re.split(r'<div[^>]*class="figure-band', match.group(1))[0]
+                abstractHTML = re.sub(r'<button\b.*?</button>', '', abstractHTML, flags=re.S)
+                return ' '.join(html.unescape(strip_html(abstractHTML)).split())
+        except Exception:
+            pass
+        return ''
+    doi = entryDOI(entry)
+    if doi:
+        try:
+            from urllib.parse import quote
+            work = json.loads(_download('https://api.crossref.org/works/' + quote(doi)))['message']
+            abstract = work.get('abstract') or ''
+            abstract = re.sub(r'<jats:title>.*?</jats:title>', '', abstract, flags=re.S)  # "Abstract" heading
+            abstract = ' '.join(html.unescape(strip_html(abstract)).split())
+            if len(abstract) > 200:
+                return abstract
+        except Exception:
+            pass
+    if 'nature.com/articles/' in link:
+        try:
+            match = re.search(r'<meta name="dc\.description" content="([^"]*)"', _download(link))
+            if match:
+                return ' '.join(html.unescape(match.group(1)).split())
+        except Exception:
+            pass
+    return ''
 
 
 def unicodeToAscii(uStr):
@@ -211,14 +299,27 @@ def executiveSummary(feedURL, feedNameString, latestExecutionDate, seenPaperIDs,
     for entry in filtered_entries:
         title = ' '.join(strip_html(entry.get('title', '(no title)')).split())
         largestring += "\n" + TITLE_START + title + TITLE_END + "\n \n"
-        if entry.get('author'):
-            largestring += " \t" + strip_html(entry.author) + "\n"
+        # Nature-family feeds list each author separately and entry.author holds only the first one.
+        authorNames = [a.get('name', '') for a in entry.get('authors', []) if isinstance(a, dict) and a.get('name')]
+        authorLine = ', '.join(authorNames) if len(authorNames) > 1 else entry.get('author', '')
+        if authorLine:
+            largestring += " \t" + strip_html(authorLine) + "\n"
         largestring += " \t" + entry.get('link', '') + "\n \n"
-        description = cleanDescription(entry.get('description', '')).strip()
+        description = cleanDescription(entry.get('description', ''))
+        # APS ends each abstract with "[Phys. Rev. A 114, 052432] Published Tue Nov 17, 2026"; keep that line.
+        citation = re.search(r'\s*(\[Phys\. Rev\.[^\]]*\]\s*Published .*)$', description)
+        if citation:
+            description = description[:citation.start()].strip()
+        # Abstract missing (Nature / Science families) or cut off with "..." (APS): fetch the full one.
+        if len(description) < 300 or description.endswith(('…', '...')):
+            description = lookUpAbstract(entry) or description
+        if citation:
+            description += "\n" + citation.group(1).strip()
         if description:
             largestring += description + "\n"
 
-    return (unicodeToAscii(largestring), numFilteredEntries)
+    # Kept as Unicode (the email is UTF-8) so Greek letters and math symbols in abstracts survive.
+    return (largestring, numFilteredEntries)
 
 
 def plainText(message):
@@ -241,8 +342,11 @@ def buildEmail(message, numVIentries, numOtherEntries, sender, recipient):
     msg.attach(MIMEText(plainText(message), 'plain', 'utf-8'))
     msg.attach(MIMEText(htmlText(message), 'html', 'utf-8'))
     msg['Subject'] = "cQED Digest " + time.strftime("%m/%d/%Y") + " [" + str(numVIentries) + "," + str(numOtherEntries) + "]"
-    msg['From'] = sender
+    # Show a name rather than a bare address, and add the Date / Message-ID headers spam filters expect.
+    msg['From'] = sender if '<' in sender else formataddr(('cQED Digest', sender))
     msg['To'] = recipient
+    msg['Date'] = formatdate(localtime=True)
+    msg['Message-ID'] = make_msgid(domain=sender.rsplit('@', 1)[-1].strip('> ') or None)
     return msg
 
 
